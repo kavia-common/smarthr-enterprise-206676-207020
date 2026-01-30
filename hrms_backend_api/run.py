@@ -1,41 +1,32 @@
 import os
-import subprocess
-import sys
 
-# Note: uvicorn is imported lazily after we ensure dependencies are available.
-# This makes the container more resilient in environments where Python deps may
-# not be preinstalled (common in preview/restart scenarios).
+from dotenv import load_dotenv
 
 
-def _ensure_dependencies() -> None:
+# PUBLIC_INTERFACE
+def main() -> None:
     """
-    Ensure required Python dependencies are installed.
+    Entrypoint for running the FastAPI app via Uvicorn.
 
-    The preview platform sometimes restarts containers in an environment where
-    site-packages are not present. If importing FastAPI fails, we install the
-    requirements at runtime (non-interactive) and proceed.
-
-    This is intentionally minimal and safe:
-    - Uses the pinned requirements.txt already in the repo.
-    - Only triggers install when needed.
+    This is used by the container CMD (`python run.py`) and is intentionally
+    deterministic:
+    - No runtime dependency installation (avoids slow/failed readiness).
+    - Loads environment variables from a local `.env` if present.
+    - Binds to HOST/PORT (defaults: 0.0.0.0:3001) so the platform can probe
+      `/healthz` successfully.
     """
-    try:
-        import fastapi  # noqa: F401
-        import uvicorn  # noqa: F401
-    except ModuleNotFoundError:
-        # Best-effort runtime install.
-        subprocess.check_call(
-            [sys.executable, "-m", "pip", "install", "--no-cache-dir", "-r", "requirements.txt"]
-        )
+    load_dotenv(override=False)
 
-
-if __name__ == "__main__":
-    _ensure_dependencies()
-
-    import uvicorn  # noqa: E402
+    import uvicorn  # imported after dotenv so env is available
 
     host = os.getenv("UVICORN_HOST", os.getenv("HOST", "0.0.0.0"))
     port = int(os.getenv("PORT", "3001"))
+
+    # Default to a single worker for preview/readiness stability.
     workers = int(os.getenv("UVICORN_WORKERS", "1"))
 
     uvicorn.run("app.main:app", host=host, port=port, workers=workers, reload=False)
+
+
+if __name__ == "__main__":
+    main()
