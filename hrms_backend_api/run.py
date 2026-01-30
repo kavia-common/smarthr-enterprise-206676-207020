@@ -1,6 +1,24 @@
 import os
+import sys
+from pathlib import Path
 
 from dotenv import load_dotenv
+
+
+def _ensure_import_path() -> None:
+    """
+    Ensure this project root is importable regardless of the process working directory.
+
+    Some hosting platforms start the process with a working directory other than the
+    container WORKDIR (e.g. `/`). In that case, importing `app.main` would fail and
+    uvicorn would never bind to the port, causing readiness timeouts.
+
+    We defensively add the directory containing this file (expected `/app`) to
+    `sys.path` so `import app` always works.
+    """
+    project_root = str(Path(__file__).resolve().parent)
+    if project_root not in sys.path:
+        sys.path.insert(0, project_root)
 
 
 # PUBLIC_INTERFACE
