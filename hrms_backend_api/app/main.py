@@ -188,7 +188,20 @@ def create_app() -> FastAPI:
     # -----------------------------
 
     class LoginRequest(BaseModel):
-        org_slug: str = Field(..., description="Organization slug (demo uses 'demo').")
+        """
+        Login payload for the UI.
+
+        Notes:
+        - Frontend historically used camelCase `orgSlug`. We accept both `org_slug` and `orgSlug`
+          to prevent request/response mismatch regressions.
+        - `org_slug` defaults to `demo` to keep the demo flow resilient.
+        """
+
+        org_slug: str = Field(
+            default="demo",
+            validation_alias="orgSlug",
+            description="Organization slug (demo uses 'demo'). Accepts both org_slug and orgSlug.",
+        )
         email: str = Field(..., description="User email.")
         password: str = Field(..., description="User password.")
 
@@ -210,17 +223,31 @@ def create_app() -> FastAPI:
         Authenticate a user and return an access/refresh token pair.
 
         This demo implementation uses in-memory users so the service works without DB.
+
+        Returns:
+            TokenPair: access/refresh token pair.
+
+        Raises:
+            HTTPException: 400 for unknown org, 401 for invalid credentials.
         """
-        if payload.org_slug.strip().lower() != "demo":
-            raise HTTPException(status_code=400, detail="Unknown org")
+        try:
+            org = (payload.org_slug or "demo").strip().lower()
+            if org != "demo":
+                raise HTTPException(status_code=400, detail="Unknown org")
 
-        user = _DEMO_USERS.get(payload.email.lower())
-        if not user or str(user["password"]) != payload.password:
-            raise HTTPException(status_code=401, detail="Invalid credentials")
+            email = (payload.email or "").strip().lower()
+            user = _DEMO_USERS.get(email)
+            if not user or str(user["password"]) != payload.password:
+                raise HTTPException(status_code=401, detail="Invalid credentials")
 
-        access = _issue_token(payload.email.lower())
-        refresh = f"refresh:{access}"
-        return TokenPair(access_token=access, refresh_token=refresh, token_type="bearer")
+            access = _issue_token(email)
+            refresh = f"refresh:{access}"
+            return TokenPair(access_token=access, refresh_token=refresh, token_type="bearer")
+        except HTTPException:
+            raise
+        except Exception:
+            # Never leak unexpected errors as 500 during auth flows; keep UI stable.
+            raise HTTPException(status_code=400, detail="Invalid login request")
 
     class MeResponse(BaseModel):
         user_id: str = Field(..., description="User id.")
