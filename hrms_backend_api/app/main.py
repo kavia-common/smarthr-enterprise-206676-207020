@@ -53,6 +53,28 @@ def create_app() -> FastAPI:
         max_age=cors_max_age,
     )
 
+    def _health_payload():
+        """Build a resilient health payload, with optional DB connectivity status."""
+        db_url = os.getenv("POSTGRES_URL") or os.getenv("DATABASE_URL")
+        check_db = _bool_env("HEALTHCHECK_DB", default=False)
+
+        payload = {"status": "ok"}
+
+        # Optional DB connectivity check that does not block readiness by default.
+        if check_db and db_url:
+            try:
+                # Lazy import so app can still boot even if DB deps are missing/misconfigured.
+                from sqlalchemy import create_engine, text
+
+                engine = create_engine(db_url, pool_pre_ping=True)
+                with engine.connect() as conn:
+                    conn.execute(text("SELECT 1"))
+                payload["database"] = {"status": "ok"}
+            except Exception as exc:  # noqa: BLE001 - health endpoint must be resilient
+                payload["database"] = {"status": "error", "detail": str(exc)}
+
+        return payload
+
     @app.get(
         "/health",
         tags=["Health"],
@@ -67,26 +89,23 @@ def create_app() -> FastAPI:
         Returns:
             JSON payload with status and optional database connectivity details.
         """
-        db_url = os.getenv("POSTGRES_URL") or os.getenv("DATABASE_URL")
-        check_db = _bool_env("HEALTHCHECK_DB", default=False)
+        return _health_payload()
 
-        payload = {"status": "ok"}
+    @app.get(
+        "/healthz",
+        tags=["Health"],
+        summary="Health check (alias)",
+        description="Alias for `/health` to match platforms that probe `/healthz` by convention.",
+        operation_id="getHealthz",
+    )
+    def healthz():
+        """
+        Health endpoint alias for platform readiness checks.
 
-        # Optional DB connectivity check that does not block readiness by default.
-        if check_db and db_url:
-            try:
-                # Lazy import so app can still boot even if DB deps are missing/misconfigured.
-                from sqlalchemy import text
-                from sqlalchemy import create_engine
-
-                engine = create_engine(db_url, pool_pre_ping=True)
-                with engine.connect() as conn:
-                    conn.execute(text("SELECT 1"))
-                payload["database"] = {"status": "ok"}
-            except Exception as exc:  # noqa: BLE001 - health endpoint must be resilient
-                payload["database"] = {"status": "error", "detail": str(exc)}
-
-        return payload
+        Returns:
+            JSON payload with status and optional database connectivity details.
+        """
+        return _health_payload()
 
     return app
 
